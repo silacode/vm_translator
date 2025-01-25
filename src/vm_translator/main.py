@@ -187,10 +187,8 @@ INITIAL_CODE = """
         D=A
         @SP
         M=D
-
-       
-
         """
+# Add initial sys.init fn call
 
 COUNTER = 0
 
@@ -244,8 +242,8 @@ class Parser:
         self, _type: Optional[Type[BaseException]], _value: Optional[BaseException], _traceback: Optional[TracebackType]
     ) -> None:
         """Context manager exit method."""
-        if self._file:
-            self._file.close()
+        if self.__file:
+            self.__file.close()
 
     def advance(self) -> None:
         """Read next line."""
@@ -278,6 +276,10 @@ class Parser:
         """Get second arg."""
         return self.current_command.split(" ")[1]
 
+    def arg3(self) -> str:
+        """Get third arg."""
+        return self.current_command.split(" ")[2]
+
 
 class CodeWriter:
     """Context manager code writer class."""
@@ -285,13 +287,19 @@ class CodeWriter:
     def __init__(self, filename: str) -> None:
         """CodeWriter Constructor."""
         self.__filename = Path(filename)
+        self.source_filename: str = None
         self.__output_file: TextIOWrapper | None = None
 
     def __enter__(self) -> Self:
         """CodeWriter context enter method."""
         self.__output_file = Path.open(f"{self.__filename.stem}.asm", "w")
         self.__output_file.write(INITIAL_CODE)
+        self.write_call("Sys.init", 0)
         return self
+
+    def set_source_filename(self, name: str) -> None:
+        """Set filename."""
+        self.ource_filename = name
 
     def __exit__(
         self, _type: Optional[Type[BaseException]], _value: Optional[BaseException], _traceback: Optional[TracebackType]
@@ -307,13 +315,18 @@ class CodeWriter:
         asm = ARITHMETIC_VM_ASM_MAP.get(command)
         asm = asm.replace("JUMP_UQ", f"JUMP{jump_id}")
         asm = asm.replace("CONTINUE_UQ", f"CONTINUE{continue_id}")
-        # self.__output_file.write("\n ")
         self.__output_file.write(f"\n//{command}")
         self.__output_file.write(asm)
 
-    def write_push_pop(self, command: PUSH_or_POP, segment: str, index: int) -> None:
+    def write_push_pop(
+        self,
+        command: PUSH_or_POP,
+        segment: str,
+        index: int,
+    ) -> None:
         """Writes push and pop command."""
         # command push/pop, segment string, index int
+
         asm_code = ""
         index_cmd = f"""
                 @{index}
@@ -345,7 +358,7 @@ class CodeWriter:
                     """
             elif segment == "static":
                 asm_code = f"""
-                    @{self.__filename}.{index}
+                    @{self.source_filename}.{index}
                     D=M
                     {PUSH_CMD}
                     """
@@ -385,7 +398,7 @@ class CodeWriter:
         elif segment == "static":
             asm_code = f"""
                     {POP_CMD}
-                    @{self.__filename}.{index}
+                    @{self.source_filename}.{index}
                     M=D
                     """
         else:
@@ -397,6 +410,182 @@ class CodeWriter:
                     """
         self.__output_file.write(f"\n//{command} {segment} {index} \n")
         self.__output_file.write(asm_code)
+
+    def write_label(self, command: str) -> None:
+        """Label method."""
+        asm = f"({command})"
+        self.__output_file.write(f"\n// label {command}")
+        self.__output_file.write("\n")
+        self.__output_file.write(asm)
+
+    def write_goto(self, command: str) -> None:
+        """GOTO method."""
+        asm = f"""
+        @{command}
+        0;JMP
+        """
+        self.__output_file.write(f"\n// goto {command}")
+        self.__output_file.write(asm)
+
+    def write_if(self, command: str) -> None:
+        """IF method."""
+        asm = f"""
+        @SP
+        AM=M-1
+        D=M
+        @{command}
+        D;JNE
+        """
+        self.__output_file.write(f"\n// if {command}")
+        self.__output_file.write(asm)
+
+    def write_function(self, fn_name: str, n_vars: int) -> None:
+        """Function declaration method."""
+        self.__output_file.write(f"\n// function {fn_name} {n_vars}")
+        asm = f"""
+        ({fn_name})
+        """
+        self.__output_file.write(asm)
+
+        if n_vars != 0:
+            for _i in range(n_vars):
+                self.write_push_pop("push", "constant", 0)
+
+    def write_call(self, fn_name: str, n_args: int) -> None:
+        """Function call method."""
+        return_address_label = "return_add_" + fn_name + "_" + str(uuid.uuid4()).replace("-", "")
+        asm = f"""
+        //call {fn_name} {n_args}
+        @{return_address_label}
+        D=A
+        {PUSH_CMD}
+        @LCL
+        D=M
+        {PUSH_CMD}
+        @ARG
+        D=M
+        {PUSH_CMD}
+        @THIS
+        D=M
+        {PUSH_CMD}
+        @THAT
+        D=M
+        {PUSH_CMD}"""
+        self.__output_file.write(asm)
+
+        # reposition ARG
+        asm = f"""
+        @SP
+        D=M
+        @5
+        D=D-A
+        @{n_args}
+        D=D-A
+        @ARG
+        M=D
+        """
+        self.__output_file.write(asm)
+        # self.write_push_pop("push", "constant", 5)
+        # self.writer_arithmetic("sub")
+        # self.write_push_pop("push", "constant", n_args)
+        # self.writer_arithmetic("sub")
+
+        asm = f"""
+        //LCL
+        @SP
+        D=M
+        @LCL
+        M=D
+        //goto
+        @{fn_name}
+        0;JMP
+        ({return_address_label})
+        """
+        self.__output_file.write(asm)
+
+    def write_return(self) -> None:
+        """Return method."""
+        self.__output_file.write("\n//return")
+        asm = """
+        //frame
+        @LCL
+        D=M
+        @R14
+        M=D
+        """
+        self.__output_file.write(asm)
+
+        # return address
+        # asm = f"""
+        # //@R14
+        # //D=M
+        # //////////////////////////////////////
+        # {PUSH_CMD}
+        # """
+        # self.__output_file.write(asm)
+        # self.write_push_pop("push", "constant", 5)
+        # self.writer_arithmetic("sub")
+
+        # asm = """
+        # //@SP
+        # //AM=M-1
+        # D=M
+        # @R15
+        # M=D
+        # //@SP
+        # //M=M-1
+        # ///////////////////////////////////////
+        # """
+        # self.__output_file.write(asm)
+
+        # return address
+        asm = """
+        @5
+        AD=D-A
+        D=M
+        @R15
+        M=D
+        """
+        self.__output_file.write(asm)
+        # reposition return value to arg
+        self.write_push_pop("pop", "argument", 0)
+        # reposition SP
+        asm = """
+        @ARG
+        D=M+1
+        @SP
+        M=D
+        //reposition THAT
+        @R14
+        DM=M-1
+        A=D
+        D=M
+        @THAT
+        M=D
+        //reposition THIS
+        @R14
+        AM=M-1
+        D=M
+        @THIS
+        M=D
+        //reposition ARG
+        @R14
+        AM=M-1
+        D=M
+        @ARG
+        M=D
+        //reposition LCL
+        @R14
+        AM=M-1
+        D=M
+        @LCL
+        M=D
+        //goto
+        @R15
+        A=M
+        0;JMP
+        """
+        self.__output_file.write(asm)
 
 
 class ExitCode(IntEnum):
@@ -423,32 +612,173 @@ def main() -> None:
 
         filename = Path(args.filename)
         if not filename.exists():
-            raise FileNotFoundError(f"File not found: {filename}")
+            raise FileNotFoundError(f"Directory not found: {filename}")
+        if filename.is_file():
+            print("working on file")
 
-        with Parser(filename) as parser, CodeWriter(filename) as code_writer:
-            while parser.has_more_lines:
-                parser.advance()
-                if parser.current_command != "" and parser.current_command[0:2] != "//":
-                    command = parser.current_command.split(" ")[0]
+            with Parser(filename) as parser, CodeWriter(filename) as code_writer:
+                code_writer.source_filename = str(filename).split(".")[0]
+                while parser.has_more_lines:
+                    parser.advance()
+                    if parser.current_command != "" and parser.current_command[0:2] != "//":
+                        command = parser.current_command.split(" ")[0]
+                        command_type = parser.command_type(command)
+                        arg1 = ""
+                        arg2 = ""
+                        arg3 = ""
+                        if command_type != CommandType.C_RETURN:
+                            arg1 = parser.arg1()
 
-                    command_type = parser.command_type(command)
-                    arg1 = ""
-                    arg2 = ""
-                    if command_type != CommandType.C_RETURN:
-                        arg1 = parser.arg1()
+                        if (
+                            command_type == CommandType.C_POP
+                            or command_type == CommandType.C_PUSH
+                            or command_type == CommandType.C_FUNCTION
+                            or command_type == CommandType.C_CALL
+                            or command_type == CommandType.C_LABEL
+                            or command_type == CommandType.C_IF
+                            or command_type == CommandType.C_GOTO
+                            # command_type != CommandType.C_RETURN
+                        ):
+                            arg2 = parser.arg2()
 
-                    if (
-                        command_type == CommandType.C_POP
-                        or command_type == CommandType.C_PUSH
-                        or command_type == CommandType.C_FUNCTION
-                        or command_type == CommandType.C_CALL
-                    ):
-                        arg2 = parser.arg2()
+                        if command_type in (CommandType.C_FUNCTION, CommandType.C_CALL):
+                            arg3 = int(parser.arg3())
 
-                    if command_type == CommandType.C_ARITHMETIC:
-                        code_writer.writer_arithmetic(arg1)
-                    else:
-                        code_writer.write_push_pop(arg1, arg2, int(parser.current_command.split(" ")[2]))
+                        if command_type == CommandType.C_ARITHMETIC:
+                            code_writer.writer_arithmetic(arg1)
+                        elif command_type == CommandType.C_LABEL:
+                            code_writer.write_label(arg2)
+                        elif command_type == CommandType.C_GOTO:
+                            code_writer.write_goto(arg2)
+                        elif command_type == CommandType.C_IF:
+                            code_writer.write_if(arg2)
+                        elif command_type == CommandType.C_FUNCTION:
+                            code_writer.write_function(arg2, arg3)
+                        elif command_type == CommandType.C_CALL:
+                            code_writer.write_call(arg2, arg3)
+                        elif command_type == CommandType.C_RETURN:
+                            code_writer.write_return()
+                        else:
+                            code_writer.write_push_pop(arg1, arg2, int(parser.current_command.split()[2]))
+        elif filename.is_dir():
+            with CodeWriter(filename) as code_writer:
+                print("working on directory")
+                all_files = list(filename.glob("*.*"))
+                priority_file = "Sys.vm"
+                # print(all_files)
+                # print(Path.joinpath(filename, priority_file))
+                sys_vm = next((f for f in all_files if f.name == priority_file), None)
+
+                if sys_vm:
+                    print("working on priority file")
+                    file_path = Path.joinpath(filename, priority_file)
+                    print(file_path)
+                    print(filename)
+                    print(type(file_path))
+                    with Parser(file_path) as parser:
+                        print(str(file_path).split(".")[0].split("/")[-1])
+                        code_writer.source_filename = str(file_path).split(".")[0].split("/")[-1]
+                        while parser.has_more_lines:
+                            parser.advance()
+                            if parser.current_command != "" and parser.current_command[0:2] != "//":
+                                command = parser.current_command.split(" ")[0]
+                                command_type = parser.command_type(command)
+                                print(parser.current_command)
+                                arg1 = ""
+                                arg2 = ""
+                                arg3 = ""
+                                if command_type != CommandType.C_RETURN:
+                                    arg1 = parser.arg1()
+
+                                if (
+                                    command_type == CommandType.C_POP
+                                    or command_type == CommandType.C_PUSH
+                                    or command_type == CommandType.C_FUNCTION
+                                    or command_type == CommandType.C_CALL
+                                    or command_type == CommandType.C_LABEL
+                                    or command_type == CommandType.C_IF
+                                    or command_type == CommandType.C_GOTO
+                                    # command_type != CommandType.C_RETURN
+                                ):
+                                    arg2 = parser.arg2()
+
+                                if command_type in (CommandType.C_FUNCTION, CommandType.C_CALL):
+                                    arg3 = int(parser.arg3())
+
+                                if command_type == CommandType.C_ARITHMETIC:
+                                    code_writer.writer_arithmetic(arg1)
+                                elif command_type == CommandType.C_LABEL:
+                                    code_writer.write_label(arg2)
+                                elif command_type == CommandType.C_GOTO:
+                                    code_writer.write_goto(arg2)
+                                elif command_type == CommandType.C_IF:
+                                    code_writer.write_if(arg2)
+                                elif command_type == CommandType.C_FUNCTION:
+                                    code_writer.write_function(arg2, arg3)
+                                elif command_type == CommandType.C_CALL:
+                                    code_writer.write_call(arg2, arg3)
+                                elif command_type == CommandType.C_RETURN:
+                                    code_writer.write_return()
+                                else:
+                                    code_writer.write_push_pop(arg1, arg2, int(parser.current_command.split()[2]))
+
+                print("working on other files")
+                for file in all_files:
+                    extension = Path(file).name.split(".")[-1]
+                    file_name = Path(file).name.split("/")[-1]
+                    static_file_name = file_name.split(".")[0]
+                    if file_name != "Sys.vm" and extension == "vm":
+                        with Parser(file) as parser:
+                            print(str(file).split(".")[0].split("/")[-1])
+                            x_name = str(file).split(".")[0].split("/")[-1]
+                            print(type(x_name))
+                            code_writer.source_filename = x_name
+                            print("t")
+                            while parser.has_more_lines:
+                                parser.advance()
+                                if parser.current_command != "" and parser.current_command[0:2] != "//":
+                                    command = parser.current_command.split(" ")[0]
+                                    command_type = parser.command_type(command)
+                                    arg1 = ""
+                                    arg2 = ""
+                                    arg3 = ""
+                                    if command_type != CommandType.C_RETURN:
+                                        arg1 = parser.arg1()
+
+                                    if (
+                                        command_type == CommandType.C_POP
+                                        or command_type == CommandType.C_PUSH
+                                        or command_type == CommandType.C_FUNCTION
+                                        or command_type == CommandType.C_CALL
+                                        or command_type == CommandType.C_LABEL
+                                        or command_type == CommandType.C_IF
+                                        or command_type == CommandType.C_GOTO
+                                        # command_type != CommandType.C_RETURN
+                                    ):
+                                        arg2 = parser.arg2()
+
+                                    if command_type in (CommandType.C_FUNCTION, CommandType.C_CALL):
+                                        arg3 = int(parser.arg3())
+
+                                    if command_type == CommandType.C_ARITHMETIC:
+                                        code_writer.writer_arithmetic(arg1)
+                                    elif command_type == CommandType.C_LABEL:
+                                        code_writer.write_label(arg2)
+                                    elif command_type == CommandType.C_GOTO:
+                                        code_writer.write_goto(arg2)
+                                    elif command_type == CommandType.C_IF:
+                                        code_writer.write_if(arg2)
+                                    elif command_type == CommandType.C_FUNCTION:
+                                        code_writer.write_function(arg2, arg3)
+                                    elif command_type == CommandType.C_CALL:
+                                        code_writer.write_call(arg2, arg3)
+                                    elif command_type == CommandType.C_RETURN:
+                                        code_writer.write_return()
+                                    else:
+                                        code_writer.write_push_pop(arg1, arg2, int(parser.current_command.split()[2]))
+
+        # with open(file_path, 'r') as file:
+        #     print(file.read()
 
         return ExitCode.SUCCESS
     except ValueError:
