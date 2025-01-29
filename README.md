@@ -37,7 +37,7 @@ python vm_translator.py <input_file.vm>
 
 ## Author
 
-[Siladitya Samaddar]
+Siladitya Samaddar
 
 ## License
 
