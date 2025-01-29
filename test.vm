@@ -1,57 +1,44 @@
-// Sys.vm. Tested by the NestedCall test script.
-// Consists of three functions: Sys.init, Sys.main, and Sys.add12.
+// This file is part of www.nand2tetris.org
+// and the book "The Elements of Computing Systems"
+// by Nisan and Schocken, MIT Press.
+// File name: projects/8/ProgramFlow/FibonacciSeries/FibonacciSeries.vm
 
-// Calls Sys.main() and stores a return value in temp 1.
-// Does not return (enters infinite loop).
-// The VM implementation starts running the Sys.init function, by default.
-function Sys.init 0
-	push constant 4000	// tests that THIS and THAT are handled correctly
-	pop pointer 0
-	push constant 5000
-	pop pointer 1
-	call Sys.main 0
-	pop temp 1
-	label LOOP
+// Puts the first n elements of the Fibonacci series in the memory,
+// starting at address addr. n and addr are given in argument[0] and
+// argument[1], which must be initialized by the caller of this code.
+
+	push argument 1         // sets THAT, the base address of the
+	pop pointer 1           // that segment, to argument[1]
+	push constant 0         // sets the series' first and second
+	pop that 0              // elements to 0 and 1, respectively       
+	push constant 1   
+	pop that 1              
+	push argument 0         // sets n, the number of remaining elements
+	push constant 2         // to be computed, to argument[0] minus 2,
+	sub                     // since 2 elements were already computed.
+	pop argument 0          
+
+label LOOP
+	push argument 0
+	if-goto COMPUTE_ELEMENT // if n > 0, goto COMPUTE_ELEMENT
+	goto END                // otherwise, goto END
+
+label COMPUTE_ELEMENT
+    // that[2] = that[0] + that[1]
+	push that 0
+	push that 1
+	add
+	pop that 2
+	// THAT += 1 (updates the base address of that)
+	push pointer 1
+	push constant 1
+	add
+	pop pointer 1 
+	// updates n-- and loops          
+	push argument 0
+	push constant 1
+	sub
+	pop argument 0          
 	goto LOOP
 
-// Sets locals 1, 2 and 3 to some values. Leaves locals 0 and 4 unchanged, 
-// to test that the 'function' VM command initliazes them to 0 (the test 
-// script sets them to -1 before this code starts running).
-// Calls Sys.add12(123) and stores the return value (should be 135) in temp 0.
-// Returns local 0 + local 1 + local 2 + local 3 + local 4 (should be 456), to 
-// confirm that locals were not mangled by the function call.
-function Sys.main 5
-	push constant 4001
-	pop pointer 0
-	push constant 5001
-	pop pointer 1
-	push constant 200
-	pop local 1
-	push constant 40
-	pop local 2
-	push constant 6
-	pop local 3
-	push constant 123
-	call Sys.add12 1
-	pop temp 0
-	push local 0
-	push local 1
-	push local 2
-	push local 3
-	push local 4
-	add
-	add
-	add
-	add
-	return
-
-// Returns (argument 0) + 12.
-function Sys.add12 0
-	push constant 4002
-	pop pointer 0
-	push constant 5002
-	pop pointer 1
-	push argument 0
-	push constant 12
-	add
-	return
+label END
